@@ -1,0 +1,175 @@
+# AI Resume Analyzer – Resume-to-Job Match (with Jina AI & DeepSearch)  
+ 
+import numpy as np  
+from sklearn.metrics.pairwise import cosine_similarity  
+import tkinter as tk  
+from tkinter import scrolledtext, messagebox  
+import requests  
+import json  
+ 
+# API KEY   
+JINA_API_KEY = "jina_2f87f8c53e7d4fe4affffdaccb04896bZLH1xvYNKRK9dHRSEBxNSYKz18ax"  
+ 
+# JOB DESCRIPTION & RESUMES  
+job_description = """  
+Marketing Assistant  
+ 
+We are seeking a detail-oriented and creative Marketing Assistant to join our team.  
+Responsibilities include creating and scheduling social media posts, tracking engagement data,  
+conducting market research, and assisting with event planning. Candidates should have strong  
+written and verbal communication skills, be comfortable using Excel for reporting, and have  
+at least 2 years of experience in marketing, communications, or related roles.  
+"""  
+ 
+resumes = [  
+    {"name": "John Carter",  
+	"text": """Marketing Assistant with 3 years of experience creating and analyzing social media  
+	campaigns for small businesses. Skilled in Google Analytics, Excel reporting, and brand content strategy.  
+	Bachelor’s Degree in Marketing, University of North Carolina, 2020.""",  
+	"years_experience": 3, "education": "Bachelor's Degree"},  
+ 
+    {"name": "Maria Lopez",  
+	"text": """Customer Service Representative transitioning into marketing. 1 year of experience  
+	in retail promotion and assisting with local advertising campaigns. Excellent communication  
+	and organization skills. Associate Degree in Business Administration, 2022.""",  
+	"years_experience": 1, "education": "Associate Degree"},  
+ 
+    {"name": "James Park",  
+	"text": """Marketing Specialist with 5 years of experience managing advertising campaigns,  
+	social media analytics, and team coordination. Skilled in Excel data visualization, Google Ads,  
+	and content management systems. Master’s Degree in Communications, Boston University, 2018.""",  
+	"years_experience": 5, "education": "Master's Degree"},  
+ 
+    {"name": "Aisha Singh",  
+	"text": """Creative content strategist with 4 years of experience developing and scheduling  
+	posts across Instagram, TikTok, and LinkedIn. Strong copywriting and SEO background.  
+	Bachelor’s Degree in Marketing, Rutgers University, 2019.""",  
+	"years_experience": 4, "education": "Bachelor's Degree"},  
+ 
+    {"name": "Carlos Nguyen",  
+	"text": """Marketing Assistant with 2 years of experience creating email newsletters,  
+	tracking engagement metrics, and managing influencer partnerships. Proficient in Canva,  
+	Excel, and Google Analytics. Bachelor’s Degree in Business Communications, 2021.""",  
+	"years_experience": 2, "education": "Bachelor's Degree"}  
+]  
+ 
+# EDUCATION SCORING  
+education_rank = {"High School": 0, "Associate Degree": 1, "Bachelor's Degree": 2, "Master's Degree": 3}  
+ 
+ 
+def local_rank(job_desc, resume_list):  
+	results = []  
+	for r in resume_list:  
+    	score = r["years_experience"] * 10 + education_rank.get(r["education"], 0) * 5  
+    	results.append((r["name"], r["years_experience"], r["education"], score))  
+	results.sort(key=lambda x: x[3], reverse=True)  
+	return results  
+ 
+ 
+# AI EMBEDDINGS RANKING  
+def get_embedding(text):  
+	try:  
+    	resp = requests.post(  
+        	"https://api.jina.ai/v1/embeddings",  
+        	headers={"Authorization": f"Bearer {JINA_API_KEY}"},  
+        	json={"model": "jina-embeddings-v2-base-en", "input": text}  
+    	)  
+    	return np.array(resp.json()["data"][0]["embedding"])  
+	except:  
+    	return None  
+ 
+ 
+def ai_rank(job_desc, resume_list):  
+	job_emb = get_embedding(job_desc)  
+	if job_emb is None:  
+    	messagebox.showwarning("API Error", "Unable to connect to Jina AI. Using local scoring instead.")  
+    	return local_rank(job_desc, resume_list)  
+ 
+	results = []  
+	for r in resume_list:  
+    	emb = get_embedding(r["text"])  
+    	if emb is None: continue  
+    	score = float(cosine_similarity([job_emb], [emb])[0][0])  
+    	results.append((r["name"], r["years_experience"], r["education"], round(score, 3)))  
+	results.sort(key=lambda x: x[3], reverse=True)  
+	return results  
+ 
+ 
+# DEEPSEARCH CHAT  
+def deepsearch_chat(prompt):  
+	url = "https://deepsearch.jina.ai/v1/chat/completions"  
+	headers = {"Content-Type": "application/json", "Authorization": f"Bearer {JINA_API_KEY}"}  
+	data = {"model": "jina-deepsearch-v1", "messages": [{"role": "user", "content": prompt}], "stream": False,  
+        	"reasoning_effort": "medium"}  
+	try:  
+    	resp = requests.post(url, headers=headers, data=json.dumps(data))  
+    	return resp.json().get("choices", [{}])[0].get("message", {}).get("content", "No response")  
+	except:  
+    	return "API error"  
+ 
+ 
+# GUI ANALYSIS  
+def analyze_and_display():  
+	output_box.delete("1.0", tk.END)  
+	output_box.insert(tk.END, "Analyzing resumes...\n\n")  
+ 
+	ranked = ai_rank(job_description, resumes) if JINA_API_KEY.startswith("jsk_") else local_rank(job_description,  
+                                                                                              	resumes)  
+ 
+	output_box.insert(tk.END, "--------------------------------------------\n")  
+	output_box.insert(tk.END, "JOB POSTING\n")  
+	output_box.insert(tk.END, "--------------------------------------------\n")  
+	output_box.insert(tk.END, f"{job_description.strip()}\n\n")  
+ 
+	output_box.insert(tk.END, "RANKED RESUMES (Best → Worst)\n")  
+	output_box.insert(tk.END, "--------------------------------------------\n")  
+ 
+	for i, (name, years, edu, score) in enumerate(ranked, start=1):  
+    	output_box.insert(tk.END, f"{i}. {name}\n")  
+    	output_box.insert(tk.END, f"   Years of Experience: {years}\n")  
+    	output_box.insert(tk.END, f"   Education: {edu}\n")  
+    	output_box.insert(tk.END, f"   Score: {score}\n")  
+    	prompt = f"Provide a brief assessment of this candidate for the job:\n\n{resumes[i - 1]['text']}"  
+    	ai_comment = deepsearch_chat(prompt)  
+    	output_box.insert(tk.END, f"   AI Comment: {ai_comment}\n")  
+    	output_box.insert(tk.END, "--------------------------------------------\n")  
+ 
+	output_box.insert(tk.END, "Analysis complete.\n")  
+ 
+ 
+# GUI SETUP  
+root = tk.Tk()  
+root.title("AI Resume Analyzer")  
+root.geometry("820x720")  
+root.configure(bg="#e0f7fa")  # light cyan background  
+ 
+title_label = tk.Label(root, text="AI Resume Analyzer", font=("Arial", 22, "bold"), bg="#e0f7fa", fg="#004d40")  
+title_label.pack(pady=10)  
+ 
+info_label = tk.Label(root, text="Click 'Analyze Resumes' to rank candidates using Jina AI and DeepSearch.",  
+                  	font=("Arial", 12), bg="#e0f7fa", fg="#004d40", wraplength=760, justify="center")  
+info_label.pack(pady=5)  
+ 
+analyze_button = tk.Button(root, text="Analyze Resumes", width=25, height=2, bg="#ffcc80", fg="black",  
+                      	font=("Arial", 12, "bold"), activebackground="#ffb74d", bd=3, relief="raised",  
+                      	command=analyze_and_display)  
+analyze_button.pack(pady=10)  
+ 
+output_box = scrolledtext.ScrolledText(root, width=95, height=28, wrap=tk.WORD, font=("Courier", 10), bg="#fff3e0",  
+                                  	fg="black")  
+output_box.pack(padx=10, pady=10)  
+ 
+close_button = tk.Button(root, text="Close", width=25, height=2, bg="#ff8a65", fg="black", font=("Arial", 12, "bold"),  
+                    	activebackground="#ff7043", bd=3, relief="raised", command=root.destroy)  
+close_button.pack(pady=10)  
+ 
+root.mainloop()  
+  
+
+  
+
+  
+
+ 
+
+ 
